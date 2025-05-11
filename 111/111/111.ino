@@ -50,8 +50,8 @@ void loop() {
 }
 
 void initializeBacklight() {
-  pinMode(15, OUTPUT);
-  digitalWrite(15, HIGH);
+  pinMode(TFT_BL, OUTPUT);
+  digitalWrite(TFT_BL, HIGH);
   Serial.println("[INFO] Backlight pin initialized and turned ON.");
 }
 
@@ -67,9 +67,18 @@ void connectToWiFi() {
   WiFi.begin(ssid, password);
 
   int retryCount = 0;
+  int animSecond = 0; // Для анимации секундной стрелки
+
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    // Рисуем секундную стрелку с текущим значением animSecond
+    drawClockHands(0, 0, animSecond);
+
+    animSecond = (animSecond + 1) % 60;
+
+    delay(200); // Частота обновления анимации (5 кадров в секунду)
+
     Serial.print(".");
+
     retryCount++;
     if (retryCount > 60) { // 30 секунд ожидания
       Serial.println("\n[ERROR] WiFi connection timeout.");
@@ -80,6 +89,7 @@ void connectToWiFi() {
   Serial.printf("[INFO] IP address: %s\n", WiFi.localIP().toString().c_str());
 }
 
+
 void disconnectWiFi() {
   WiFi.disconnect(true);  // Отключаем и очищаем настройки Wi-Fi
   WiFi.mode(WIFI_OFF);    // Выключаем Wi-Fi модуль
@@ -87,24 +97,33 @@ void disconnectWiFi() {
 }
 
 void synchronizeTime() {
-  // Установка часового пояса (GMT+3) и серверов NTP
   configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
   Serial.println("[INFO] Waiting for NTP time synchronization...");
 
-  struct tm timeinfo;
+  struct tm dummyTime;
   int retryCount = 0;
-  while (!getLocalTime(&timeinfo)) {
-    delay(500);
+  int animSecond = 0; // Для анимации секундной стрелки как секундомера
+
+  while (!getLocalTime(&dummyTime)) {
+    // Рисуем секундную стрелку с текущим значением animSecond
+    drawClockHands(0, 0, animSecond);
+
+    animSecond = (animSecond + 1) % 60; // Увеличиваем секунду, циклично от 0 до 59
+
+    delay(200); // Частота обновления анимации (5 кадров в секунду)
+
     Serial.print(".");
+
     retryCount++;
-    
-    if (retryCount > 60) { // 30 секунд ожидания
+    if (retryCount > 150) { // Около 30 секунд ожидания
       Serial.println("\n[ERROR] NTP time sync timeout.");
       return;
     }
   }
+
   Serial.println("\n[INFO] Time synchronized.");
 }
+
 
 void drawClockFace() {
   tft.fillScreen(tft.color565(30, 30, 30)); // тёмно-серый фон
