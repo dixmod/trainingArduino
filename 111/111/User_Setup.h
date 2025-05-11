@@ -11,3 +11,5 @@
 #define TFT_BGR  // Для 90% дисплеев GC9A01
 #define SPI_FREQUENCY  10000000 // Снизьте до 10 МГц для теста
 // #define TFT_RGB_ORDER TFT_RGB  // или TFT_BGR
+
+#define LOAD_GFXFF
