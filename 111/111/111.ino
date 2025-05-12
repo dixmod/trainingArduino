@@ -2,6 +2,9 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <time.h>
+#include <Wire.h>
+#include <Adafruit_BME280.h>
+#include <Adafruit_Sensor.h>
 
 // #include <Fonts/GFXFF/FreeSans9pt7b.h>
 
@@ -10,6 +13,12 @@ constexpr int CENTER_X = SCREEN_SIZE / 2;
 constexpr int CENTER_Y = SCREEN_SIZE / 2;
 constexpr int RADIUS = 100;  // Максимально большой радиус с отступом
 
+
+Adafruit_BME280 bme;
+unsigned long lastSensorUpdate = 0;
+const int SENSOR_UPDATE_INTERVAL = 60000; // Обновление каждые 5 секунд
+
+
 TFT_eSPI tft = TFT_eSPI();
 
 int prevHourX = -1, prevHourY = -1;
@@ -17,10 +26,9 @@ int prevMinX = -1, prevMinY = -1;
 int prevSecX = -1, prevSecY = -1;
 
 void setup() {
-
-
   initializeBacklight();
   initializeDisplay();
+  initializeBME280(); // Инициализация датчика
 
   // testFonts();
 
@@ -51,8 +59,44 @@ void loop() {
   int seconds = timeinfo.tm_sec;
 
   drawClockHands(hours, minutes, seconds);
+  updateSensorData(); // Обновление показаний датчика
 
   delay(1000);
+}
+
+void initializeBME280() {
+  if (!bme.begin(0x76)) { // Адрес 0x76 или 0x77
+    Serial.println("Could not find a valid BME280 sensor!");
+    while (1);
+  }
+  Serial.println("[INFO] BME280 sensor initialized");
+}
+
+// Обновление и отображение данных с датчика
+void updateSensorData() {
+  if (millis() - lastSensorUpdate > SENSOR_UPDATE_INTERVAL) {
+    float temp = bme.readTemperature();
+    float humidity = bme.readHumidity();
+    float pressure = bme.readPressure() / 100.0F;
+
+    // tft.setTextFont(1);
+    // tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    
+    // Вывод температуры
+    // tft.setCursor(10, SCREEN_SIZE - 30);
+    // tft.printf("Temp: %.1fC", temp);
+    Serial.printf("Temp: %.1fC, Humi: %.1f%%, Pres: %.1fhPa\n", temp, humidity, pressure);
+    
+    // Вывод влажности
+    // tft.setCursor(100, SCREEN_SIZE - 30);
+    // tft.printf("Humi: %.1f%%", humidity);
+    
+    // Вывод давления
+    // tft.setCursor(10, SCREEN_SIZE - 15);
+    // tft.printf("Pres: %.1fhPa", pressure);
+
+    lastSensorUpdate = millis();
+  }
 }
 
 void initializeBacklight() {
@@ -94,7 +138,6 @@ void connectToWiFi() {
   Serial.println("\n[INFO] WiFi connected.");
   Serial.printf("[INFO] IP address: %s\n", WiFi.localIP().toString().c_str());
 }
-
 
 void disconnectWiFi() {
   WiFi.disconnect(true);  // Отключаем и очищаем настройки Wi-Fi
@@ -174,26 +217,29 @@ void drawClockFace() {
     tft.drawString(romanNumerals[i], x, y);
   }
 
-for (int i = 0; i < 60; i++) {
-  float angle = i * 6 * DEG_TO_RAD;
-  int diffStart = 0;
+  for (int i = 0; i < 60; i++) {
+    float angle = i * 6 * DEG_TO_RAD;
+    int diffStart = 0;
 
-  if (i % 5 != 0) {
-    diffStart = 12;
+    if (i % 5 != 0) {
+      diffStart = 12;
+    }
+
+    int xStart = CENTER_X + (darkBronzeRadius - diffStart) * sin(angle);
+    int yStart = CENTER_Y - (darkBronzeRadius - diffStart) * cos(angle);
+
+    int xEnd = CENTER_X + (darkBronzeRadius - 25) * sin(angle);
+    int yEnd = CENTER_Y - (darkBronzeRadius - 25) * cos(angle);
+
+    // Тень рисок (если нужно)
+    //tft.drawLine(xStart + 1, yStart + 1, xEnd + 1, yEnd + 1, tft.color565(50, 30, 10));
+
+    // Основная линия рисок
+    tft.drawLine(xStart, yStart, xEnd, yEnd, tft.color565(230, 180, 70));
+
+    // Очистка области для датчиков
+  //  tft.fillRect(0, SCREEN_SIZE - 40, SCREEN_SIZE, 40, TFT_BLACK);
   }
-
-  int xStart = CENTER_X + (darkBronzeRadius - diffStart) * sin(angle);
-  int yStart = CENTER_Y - (darkBronzeRadius - diffStart) * cos(angle);
-
-  int xEnd = CENTER_X + (darkBronzeRadius - 25) * sin(angle);
-  int yEnd = CENTER_Y - (darkBronzeRadius - 25) * cos(angle);
-
-  // Тень рисок (если нужно)
-  //tft.drawLine(xStart + 1, yStart + 1, xEnd + 1, yEnd + 1, tft.color565(50, 30, 10));
-
-  // Основная линия рисок
-  tft.drawLine(xStart, yStart, xEnd, yEnd, tft.color565(230, 180, 70));
-}
 
   Serial.println("[INFO] Full screen volume clock face drawn.");
 }
