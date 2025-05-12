@@ -8,7 +8,7 @@
 constexpr int SCREEN_SIZE = 240;
 constexpr int CENTER_X = SCREEN_SIZE / 2;
 constexpr int CENTER_Y = SCREEN_SIZE / 2;
-constexpr int RADIUS = 110;  // Максимально большой радиус с отступом
+constexpr int RADIUS = 100;  // Максимально большой радиус с отступом
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -179,7 +179,7 @@ for (int i = 0; i < 60; i++) {
   int diffStart = 0;
 
   if (i % 5 != 0) {
-    diffStart = 10;  // короткие риски для минут
+    diffStart = 12;
   }
 
   int xStart = CENTER_X + (darkBronzeRadius - diffStart) * sin(angle);
