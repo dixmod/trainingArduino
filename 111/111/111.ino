@@ -6,18 +6,12 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
 
-// #include <Fonts/GFXFF/FreeSans9pt7b.h>
-
 constexpr int SCREEN_SIZE = 240;
 constexpr int CENTER_X = SCREEN_SIZE / 2;
 constexpr int CENTER_Y = SCREEN_SIZE / 2;
 constexpr int RADIUS = 100;  // Максимально большой радиус с отступом
 
-
 Adafruit_BME280 bme;
-unsigned long lastSensorUpdate = 0;
-const int SENSOR_UPDATE_INTERVAL = 60000; // Обновление каждые 5 секунд
-
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -25,17 +19,47 @@ int prevHourX = -1, prevHourY = -1;
 int prevMinX = -1, prevMinY = -1;
 int prevSecX = -1, prevSecY = -1;
 
+// Переменные для энкодера
+volatile int encoderPos = 0;
+volatile bool encoderMoved = false;
+bool relayState = false;
+
+// Таймеры
+unsigned long lastClockUpdate = 0;
+const unsigned long CLOCK_UPDATE_INTERVAL = 1000; // 1 секунда
+
+unsigned long lastSensorUpdate = 0;
+const unsigned long SENSOR_UPDATE_INTERVAL = 60000; // 60 секунд
+
+unsigned long lastButtonDebounceTime = 0;
+const unsigned long BUTTON_DEBOUNCE_DELAY = 50;
+bool lastButtonStableState = HIGH;
+
+// --- Прототипы ---
+void IRAM_ATTR handleEncoderA();
+void IRAM_ATTR handleEncoderB();
+
 void setup() {
+  Serial.begin(115200);
+
   initializeBacklight();
   initializeDisplay();
-  initializeBME280(); // Инициализация датчика
+  initializeBME280();
 
-  // testFonts();
+  // Настройка пинов энкодера
+  pinMode(ENCODER_PIN_A, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_B, INPUT_PULLUP);
+  pinMode(ENCODER_BUTTON_PIN, INPUT_PULLUP);
+
+  // Настройка прерываний энкодера
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_A), handleEncoderA, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_B), handleEncoderB, CHANGE);
+
+  // Настройка пина реле
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Реле выключено по умолчанию
 
   drawClockFace();
-
-  Serial.begin(115200);
-  delay(1000); // Дать время Serial подключиться
 
   connectToWiFi();
   synchronizeTime();
@@ -46,22 +70,99 @@ void setup() {
 }
 
 void loop() {
-  struct tm timeinfo;
+  unsigned long currentMillis = millis();
 
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("[ERROR] Failed to obtain time from NTP.");
-    delay(1000);
-    return;
+  // Обновление часов каждую секунду
+  if (currentMillis - lastClockUpdate >= CLOCK_UPDATE_INTERVAL) {
+    lastClockUpdate = currentMillis;
+
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo)) {
+      int hours = timeinfo.tm_hour % 12;
+      int minutes = timeinfo.tm_min;
+      int seconds = timeinfo.tm_sec;
+
+      drawClockHands(hours, minutes, seconds);
+    } else {
+      Serial.println("[ERROR] Failed to obtain time from NTP.");
+    }
   }
 
-  int hours = timeinfo.tm_hour % 12;
-  int minutes = timeinfo.tm_min;
-  int seconds = timeinfo.tm_sec;
+  // Обновление данных с датчика по таймеру
+  if (currentMillis - lastSensorUpdate >= SENSOR_UPDATE_INTERVAL) {
+    lastSensorUpdate = currentMillis;
+    updateSensorData();
+  }
 
-  drawClockHands(hours, minutes, seconds);
-  updateSensorData(); // Обновление показаний датчика
+  // Обработка кнопки энкодера с антидребезгом
+  handleEncoderButton();
 
-  delay(1000);
+  // Отрисовка состояния реле (обновляет только при изменении)
+  //drawRelayState();
+
+  // Здесь можно добавить обработку вращения энкодера, если нужно
+}
+
+// --- Обработчики прерываний энкодера ---
+void IRAM_ATTR handleEncoderA() {
+  bool a = digitalRead(ENCODER_PIN_A);
+  bool b = digitalRead(ENCODER_PIN_B);
+  if (a == b) {
+    encoderPos++;
+  } else {
+    encoderPos--;
+  }
+  encoderMoved = true;
+}
+
+void IRAM_ATTR handleEncoderB() {
+  bool a = digitalRead(ENCODER_PIN_A);
+  bool b = digitalRead(ENCODER_PIN_B);
+  if (a != b) {
+    encoderPos++;
+  } else {
+    encoderPos--;
+  }
+  encoderMoved = true;
+}
+
+// --- Обработка нажатия кнопки энкодера с антидребезгом ---
+void handleEncoderButton() {
+  bool buttonState = digitalRead(ENCODER_BUTTON_PIN);
+  unsigned long currentMillis = millis();
+
+  static bool lastRawButtonState = HIGH; // Последнее сырое состояние кнопки
+
+  if (buttonState != lastRawButtonState) {
+    lastButtonDebounceTime = currentMillis;
+    lastRawButtonState = buttonState;
+  }
+
+  if ((currentMillis - lastButtonDebounceTime) > BUTTON_DEBOUNCE_DELAY) {
+    if (buttonState != lastButtonStableState) {
+      lastButtonStableState = buttonState;
+
+      // Реагируем на переход с LOW (нажатие) на HIGH (отпускание)
+      if (buttonState == HIGH) {
+        relayState = !relayState;
+        digitalWrite(RELAY_PIN, relayState ? HIGH : LOW);
+        Serial.printf("Relay toggled on button release, relay is now %s\n", relayState ? "ON" : "OFF");
+      }
+    }
+  }
+}
+
+void drawRelayState() {
+  static bool lastRelayState = false;
+  if (lastRelayState != relayState) {
+    uint16_t color = relayState ? tft.color565(0, 255, 0) : tft.color565(255, 0, 0);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(color, tft.color565(30, 30, 30));
+    tft.setFreeFont(&FreeSans9pt7b);
+    tft.fillRect(5, 5, 100, 20, tft.color565(30, 30, 30)); // Очистка области
+    tft.drawString(relayState ? "Relay: ON" : "Relay: OFF", 5, 5);
+    lastRelayState = relayState;
+  }
 }
 
 void initializeBME280() {
@@ -72,31 +173,14 @@ void initializeBME280() {
   Serial.println("[INFO] BME280 sensor initialized");
 }
 
-// Обновление и отображение данных с датчика
 void updateSensorData() {
-  if (millis() - lastSensorUpdate > SENSOR_UPDATE_INTERVAL) {
-    float temp = bme.readTemperature();
-    float humidity = bme.readHumidity();
-    float pressure = bme.readPressure() / 100.0F;
+  float temp = bme.readTemperature();
+  float humidity = bme.readHumidity();
+  float pressure = bme.readPressure() / 100.0F;
 
-    // tft.setTextFont(1);
-    // tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    
-    // Вывод температуры
-    // tft.setCursor(10, SCREEN_SIZE - 30);
-    // tft.printf("Temp: %.1fC", temp);
-    Serial.printf("Temp: %.1fC, Humi: %.1f%%, Pres: %.1fhPa\n", temp, humidity, pressure);
-    
-    // Вывод влажности
-    // tft.setCursor(100, SCREEN_SIZE - 30);
-    // tft.printf("Humi: %.1f%%", humidity);
-    
-    // Вывод давления
-    // tft.setCursor(10, SCREEN_SIZE - 15);
-    // tft.printf("Pres: %.1fhPa", pressure);
+  Serial.printf("Temp: %.1fC, Humi: %.1f%%, Pres: %.1fhPa\n", temp, humidity, pressure);
 
-    lastSensorUpdate = millis();
-  }
+  // Здесь можно добавить вывод на экран, если нужно
 }
 
 void initializeBacklight() {
@@ -120,12 +204,10 @@ void connectToWiFi() {
   int animSecond = 0; // Для анимации секундной стрелки
 
   while (WiFi.status() != WL_CONNECTED) {
-    // Рисуем секундную стрелку с текущим значением animSecond
     drawClockHands(0, 0, animSecond);
-
     animSecond = (animSecond + 1) % 60;
 
-    delay(200); // Частота обновления анимации (5 кадров в секунду)
+    delay(200); // Можно оставить короткий delay для анимации и WiFi ожидания
 
     Serial.print(".");
 
@@ -140,31 +222,29 @@ void connectToWiFi() {
 }
 
 void disconnectWiFi() {
-  WiFi.disconnect(true);  // Отключаем и очищаем настройки Wi-Fi
-  WiFi.mode(WIFI_OFF);    // Выключаем Wi-Fi модуль
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
   Serial.println("[INFO] WiFi disconnected and turned off.");
 }
 
 void synchronizeTime() {
-  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  configTime(3 * 3600, 0, "ntp0.ntp-servers.net", "ntp1.ntp-servers.net");
   Serial.println("[INFO] Waiting for NTP time synchronization...");
 
   struct tm dummyTime;
   int retryCount = 0;
-  int animSecond = 0; // Для анимации секундной стрелки как секундомера
+  int animSecond = 0;
 
   while (!getLocalTime(&dummyTime)) {
-    // Рисуем секундную стрелку с текущим значением animSecond
     drawClockHands(0, 0, animSecond);
+    animSecond = (animSecond + 1) % 60;
 
-    animSecond = (animSecond + 1) % 60; // Увеличиваем секунду, циклично от 0 до 59
-
-    delay(200); // Частота обновления анимации (5 кадров в секунду)
+    delay(200);
 
     Serial.print(".");
 
     retryCount++;
-    if (retryCount > 150) { // Около 30 секунд ожидания
+    if (retryCount > 150) {
       Serial.println("\n[ERROR] NTP time sync timeout.");
       return;
     }
@@ -244,8 +324,6 @@ void drawClockFace() {
   Serial.println("[INFO] Full screen volume clock face drawn.");
 }
 
-
-
 void drawClockHands(int hours, int minutes, int seconds) {
   uint16_t bgColor = tft.color565(205, 127, 50); // Цвет циферблата (фон для стирания)
 
@@ -322,4 +400,3 @@ void drawClockHands(int hours, int minutes, int seconds) {
   prevSecX = secX;
   prevSecY = secY;
 }
-

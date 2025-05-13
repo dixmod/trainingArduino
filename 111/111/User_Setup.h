@@ -13,3 +13,11 @@
 // #define TFT_RGB_ORDER TFT_RGB  // или TFT_BGR
 
 #define LOAD_GFXFF
+
+// Пины энкодера и кнопки
+#define ENCODER_PIN_A 32
+#define ENCODER_PIN_B 35
+#define ENCODER_BUTTON_PIN 25
+
+// Пин реле
+#define RELAY_PIN 26
